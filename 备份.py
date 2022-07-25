@@ -36,7 +36,7 @@ data_segment_size = 1472 # bytes/from Showing Data
 # Part one: uploading part
 
 # read the network packet trace data
-NETWORK_TRACE = '3HK'
+NETWORK_TRACE = 'download'
 network_trace_dir = './network_trace/' + NETWORK_TRACE + '/'
 upload_dir =  './network_trace/upload/'
 cooked_files = os.listdir(network_trace_dir)

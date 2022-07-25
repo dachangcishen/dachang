@@ -19,7 +19,7 @@ RTT = 0 # round trip time
 # video configurations
 FPS = 25.0
 frame_time = 1/FPS
-video_duration = 30.0 # seconds
+video_duration = 20.0 # seconds
 
 # at stage 1: no need for video trace data since the packet network trace data is the most important, we could simply
 # use a CBR all-i video (constant frame size for all frames)
@@ -38,7 +38,7 @@ data_segment_size = 1472 # bytes/from Showing Data
 # Part one: uploading part
 
 # read the network packet trace data
-NETWORK_TRACE = '3HK'
+NETWORK_TRACE = 'download'
 network_trace_dir = './network_trace/' + NETWORK_TRACE + '/'
 upload_dir =  './network_trace/upload/'
 cooked_files = os.listdir(network_trace_dir)
@@ -53,30 +53,36 @@ network_TP_history = []
 network_TP_history2 = []
 network_TP_history3 = []
 network_TP_history4 = []
-link_delay = [random.randint(1,9) / 1000, random.randint(1,9) / 1000, random.randint(1,9) / 1000]
+upload_speed = []
+all_download_speed = []
+
+link_delay = [random.randint(0,0) / 1000, random.randint(0,0) / 1000, random.randint(0,0) / 1000]
 # read the data into a list
 for cooked_file in cooked_files:
     # temporary lists
     file_path = network_trace_dir + cooked_file
     packet_arrival_time = []
     packet_size = []
+    download_speed = []
     with open(file_path, 'rb') as f:
         serial = 0
         relative_start = 0
+
         for line in f:
             parse = line.split()
-            packet_size.append(float(parse[1]))
+            
             if serial == 0:
                 packet_arrival_time.append(0)
                 relative_start = float(parse[0])
             else:
                 packet_arrival_time.append(float(parse[0])-relative_start)
-                if packet_arrival_time[-1] == packet_arrival_time[-2]:
-                    # check if there are duplicates in timecodes
-                    packet_size.pop()
-                    packet_arrival_time.pop()
+                if not packet_arrival_time[-1] == packet_arrival_time[-2]:
+                    
+                    download_speed.append(float(parse[1])*8/(packet_arrival_time[-1]-packet_arrival_time[-2])/1000)  # kbps
             serial = serial+1
-            
+            packet_size.append(float(parse[1]))
+            if packet_arrival_time[-1] > 2 * video_duration: break
+        all_download_speed.append(download_speed)    
         all_packet_arrival_time.append(packet_arrival_time)
         all_packet_size.append(packet_size)
         all_file_names.append(cooked_file)
@@ -89,13 +95,16 @@ for i in cooked_upload_files:
          for line in f:
              parse = line.split()
              if serial == 0:
-                 upload_time.append(0)
-                 relative_start = float(parse[0])
+                upload_time.append(0)
+                relative_start = float(parse[0])
              else:
-                 upload_time.append(float(parse[0])-relative_start)
+                upload_time.append(float(parse[0])-relative_start)
+                if not packet_arrival_time[-1] == packet_arrival_time[-2]:
+                    
+                    upload_speed.append(float(parse[1])*8/(packet_arrival_time[-1]-packet_arrival_time[-2])/1000)  # kbps
              serial = serial+1
              upload_packet_size.append(float(parse[1]))
-         if upload_time[-1] > 2 * video_duration: break
+             if upload_time[-1] > 2 * video_duration: break
 
 
 # place = 0
@@ -140,30 +149,28 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
         # during initial buffer, send out the original frame
         for i in range(int(total_frame_number)):
             # initial_frame
-            if i < FPS-1:
+            # print(real_time, i * frame_time)
+            if i == 0:
                 next_frame_size = raw_frame_size
                 next_frame_size2 = raw_frame_size
                 next_frame_size3 = raw_frame_size
                 next_frame_size4 = raw_frame_size
             else:
-                # todo: put estimation algorithm here
-                # using the throughput history to predict the frame size
-                # next_frame_size = 100
-                if len(network_TP_history)>=4:
-                    next_frame_size = (1 * network_TP_history[-1] + 0 * network_TP_history[-2] - 0 * network_TP_history[-3] - 0 * network_TP_history[-4]) * frame_time / 3
-                    next_frame_size2 = (1 * network_TP_history2[-1] + 0 * network_TP_history2[-2] - 0 * network_TP_history2[-3] - 0 * network_TP_history2[-4]) * frame_time / 3
-                    next_frame_size3 = (1 * network_TP_history3[-1] + 0 * network_TP_history3[-2] - 0 * network_TP_history3[-3] - 0 * network_TP_history3[-4]) * frame_time / 3
-                    next_frame_size4 = (1 * network_TP_history4[-1] + 0 * network_TP_history4[-2] - 0 * network_TP_history4[-3] - 0 * network_TP_history4[-4]) * frame_time / 3
-                else:
-                    next_frame_size = statistics.mean(network_TP_history) * frame_time / 3
-                    next_frame_size2 = statistics.mean(network_TP_history2) * frame_time / 3
-                    next_frame_size3 = statistics.mean(network_TP_history3) * frame_time / 3
-                    next_frame_size4 = statistics.mean(network_TP_history4) * frame_time / 3
-            if real_time >= (i + 1) * frame_time:
-                next_frame_size = (next_frame_size / (real_time / frame_time - i))
-                next_frame_size2 = (next_frame_size2 / (real_time / frame_time - i))
-                next_frame_size3 = (next_frame_size3 / (real_time / frame_time - i))
-                next_frame_size4 = (next_frame_size4 / (real_time / frame_time - i))
+                next_frame_size = (1 * network_TP_history[-1]) * frame_time / 10
+                next_frame_size2 = min((network_TP_history[-1]) * frame_time / 10,(network_TP_history2[-1]) * frame_time / 2.5)
+                next_frame_size3 = min((network_TP_history[-1]) * frame_time / 10,(network_TP_history3[-1]) * frame_time / 2.5)
+                next_frame_size4 = min((network_TP_history[-1]) * frame_time / 10,(network_TP_history4[-1]) * frame_time / 2.5)
+            if real_time > (i + 1) * frame_time:
+                next_frame_size = 0
+                next_frame_size2 = 0
+                next_frame_size3 = 0
+                next_frame_size4 = 0
+                
+                print("protection")
+                '''next_frame_size = min(next_frame_size, 2000 - 1000 * (real_time / frame_time - i))
+                next_frame_size2 = min(next_frame_size2, 2000 - 1000 * (real_time / frame_time - i))
+                next_frame_size3 = min(next_frame_size3, 2000 - 1000 * (real_time / frame_time - i))
+                next_frame_size4 = min(next_frame_size4, 2000 - 1000 * (real_time / frame_time - i))'''
             if(next_frame_size < frame_size_min):next_frame_size = frame_size_min
             if(next_frame_size > frame_size_max):next_frame_size = frame_size_max
             if(next_frame_size2 < frame_size_min):next_frame_size2 = frame_size_min
@@ -200,6 +207,7 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
             time2 = 0
             time3 = 0
             time4 = 0
+            sum_size = 0
             while True:
                 # print(all_packet_arrival_time[0][packet_serial], real_time)
                 if real_time1 == 0:
@@ -219,8 +227,10 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
                 temp_upload = temp_upload + upload_packet_size[upload_serial] # in bytes
                 upload_serial = upload_serial + 1
                 timeu2 += upload_time[upload_serial] - upload_time[upload_serial - 1]
-                if(timeu2 > frame_time / 2): break
-
+                if(timeu2 > frame_time / 3): 
+                    timeu2 = frame_time / 3
+                    break
+            sum_size += temp_upload
             while True:
                 # print(all_packet_arrival_time[0][packet_serial], real_time)
                 if real_time2 == 0:
@@ -240,10 +250,12 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
                 temp_size = temp_size + all_packet_size[0][packet_serial2] # in bytes
                 packet_serial2 = packet_serial2 + 1
                 time2 += all_packet_arrival_time[0][packet_serial2] - all_packet_arrival_time[0][packet_serial2 - 1]
-                if(time2 > frame_time / 2): break
-
+                if(time2 > frame_time): 
+                    time2 = frame_time
+                    break
+            if(timeu2 == frame_time / 3) or (time2 == frame_time): frameloss += 1
             time2 = max(time2, timeu2)
-            if(time2 > frame_time / 2): frameloss += 1
+            network_TP_history2.append((temp_size)/(time2))
             
             frame_arrival_time2.append(real_time + link_delay[0] +time2)
             frame_send_time3.append(real_time + timeu2)
@@ -254,7 +266,7 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
             upload_serial = upload_serial + 1
             while True:
                 # print(temp_size)
-                if temp_upload * 8/1000 > next_frame_size2: # in kb
+                if temp_upload * 8/1000 > next_frame_size3: # in kb
                     break
                 # print(packet_serial, i)
                 # print(len(all_packet_size[0]))
@@ -262,8 +274,10 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
                 temp_upload = temp_upload + upload_packet_size[upload_serial] # in bytes
                 upload_serial = upload_serial + 1
                 timeu3 += upload_time[upload_serial] - upload_time[upload_serial - 1]
-                if(timeu3 > frame_time / 2): break
-
+                if(timeu3 > frame_time / 3): 
+                    timeu3 = frame_time / 3
+                    break
+            sum_size += temp_upload
             while True:
                 # print(all_packet_arrival_time[0][packet_serial], real_time)
                 if real_time3 == 0:
@@ -283,10 +297,13 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
                 temp_size = temp_size + all_packet_size[1][packet_serial3] # in bytes
                 packet_serial3 = packet_serial3 + 1
                 time3 += all_packet_arrival_time[1][packet_serial3] - all_packet_arrival_time[1][packet_serial3 - 1]
-                if(time3 > frame_time / 2): break
-
+                if(time3 > frame_time): 
+                    time3 = frame_time
+                    break
+            if(timeu3 == frame_time / 3) or (time3 == frame_time): frameloss += 1
             time3 = max(time3, timeu3)
-            if(time3 > frame_time / 2): frameloss += 1
+            network_TP_history3.append((temp_size)/(time3))
+
             frame_arrival_time3.append(real_time + timeu2 + link_delay[1] + time3)
             frame_send_time4.append(real_time + timeu2 + timeu3)
             temp_size = 0
@@ -295,7 +312,7 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
             upload_serial = upload_serial + 1
             while True:
                 # print(temp_size)
-                if temp_upload * 8/1000 > next_frame_size2: # in kb
+                if temp_upload * 8/1000 > next_frame_size4: # in kb
                     break
                 # print(packet_serial, i)
                 # print(len(all_packet_size[0]))
@@ -303,7 +320,10 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
                 temp_upload = temp_upload + upload_packet_size[upload_serial] # in bytes
                 upload_serial = upload_serial + 1
                 timeu4 += upload_time[upload_serial] - upload_time[upload_serial - 1]
-                if(timeu4 > frame_time / 2): break
+                if(timeu4 > frame_time / 3): 
+                    timeu4 = frame_time / 3
+                    break
+            sum_size += temp_upload
             while True:
                 # print(all_packet_arrival_time[0][packet_serial], real_time)
                 if real_time4 == 0:
@@ -323,10 +343,13 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
                 temp_size = temp_size + all_packet_size[2][packet_serial4] # in bytes
                 packet_serial4 = packet_serial4 + 1
                 time4 += all_packet_arrival_time[2][packet_serial4] - all_packet_arrival_time[2][packet_serial4 - 1]
-                if(time4 > frame_time / 2): break
-
+                if(time4 > frame_time): 
+                    time4 = frame_time
+                    break
+            if(timeu4 == frame_time / 3) or (time4 == frame_time): frameloss += 1
             time4 = max(time4, timeu4)
-            if(time4 > frame_time / 2): frameloss += 1
+            network_TP_history4.append((temp_size)/(time4))
+            network_TP_history.append((sum_size)/(timeu2 + timeu3 + timeu4))
             frame_arrival_time4.append(real_time + timeu2 + timeu3 + link_delay[2] + time4)
             real_time += timeu2 + timeu3 + timeu4
             real_time1 += timeu2 + timeu3 + timeu4
@@ -334,11 +357,8 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
             real_time3 += time3
             real_time4 += time4
                 # record the throughput history for every frame (kbs)
-            #print(time2, timeu2,time3,timeu3,time4, timeu4)
-            network_TP_history.append((next_frame_size2 + next_frame_size3 + next_frame_size4)/(time2 + time3 + time4))
-            network_TP_history2.append((next_frame_size2)/(link_delay[0] + time2))
-            network_TP_history3.append((next_frame_size3)/(link_delay[1] + time3))
-            network_TP_history4.append((next_frame_size4)/(link_delay[2] + time4))
+            print(time2, timeu2,time3,timeu3,time4, timeu4)
+            
 
             
         # print(len(frame_cdn_arrival_time))
@@ -347,12 +367,12 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
             print(frame_send_time2[i],frame_arrival_time2[i],frame_send_time3[i],frame_arrival_time3[i],frame_send_time4[i],frame_arrival_time4[i])
         # based on the packet arrival time and estimated frame size, calculate the exact arrival time of
         # each frame at the CDN server
-        tptest = [(all_packet_size[0][2 * i + 8] + all_packet_size[0][2 * i + 7] + all_packet_size[0][2 * i + 6] + all_packet_size[0][2 * i + 5] + all_packet_size[0][2 * i + 4] + all_packet_size[0][2 * i + 3] + all_packet_size[0][2 * i + 2] + all_packet_size[0][2 * i + 1]) / (all_packet_arrival_time[0][2 * i + 8] - all_packet_arrival_time[0][2 * i]) for i in range(int(total_frame_number) - 1)]
+        tptest = [all_download_speed[2][i] for i in range(int(total_frame_number) - 1)]
         tptest.append(statistics.mean(tptest))
         network_TP_history_trans = [min(2000,i * frame_time / 3) for i in network_TP_history]
-        network_TP_history2_trans = [min(2000,i * frame_time / 3) for i in network_TP_history2]
-        network_TP_history3_trans = [min(2000,i * frame_time / 3) for i in network_TP_history3]
-        network_TP_history4_trans = [min(2000,i * frame_time / 3) for i in network_TP_history4]
+        network_TP_history2_trans = [min(2000,i * frame_time) for i in network_TP_history2]
+        network_TP_history3_trans = [min(2000,i * frame_time) for i in network_TP_history3]
+        network_TP_history4_trans = [min(2000,i * frame_time) for i in network_TP_history4]
         difference = [abs(network_TP_history_trans[i] - estimated_frame_size[i]) for i in range(int(total_frame_number))]
         difference2 = [abs(network_TP_history2_trans[i] - estimated_frame_size2[i]) for i in range(int(total_frame_number))]
         difference3 = [abs(network_TP_history3_trans[i] - estimated_frame_size3[i]) for i in range(int(total_frame_number))]
@@ -396,15 +416,15 @@ if all_packet_arrival_time[0][-1] >= video_duration + initial_buffers:
         print(statistics.mean(fluctuation4))
         print("frame loss:")
         print(frameloss)
-        plt.plot(framenumber, tptest, '.-', label='tptest')
+        #plt.plot(framenumber, tptest, '.-', label='tptest')
         #plt.plot(framenumber, estimated_frame_size, '.-', label='estimated frame size')
         #plt.plot(framenumber, estimated_frame_size2, '.-', label='estimated frame size2')
         #plt.plot(framenumber, estimated_frame_size3, '.-', label='estimated frame size3')
         #plt.plot(framenumber, estimated_frame_size4, '.-', label='estimated frame size4')
-        #plt.plot(framenumber, network_TP_history_trans, '.-', label='network throughput history')
-        #plt.plot(framenumber, network_TP_history2_trans, '.-', label='network throughput history2')
-        #plt.plot(framenumber, network_TP_history3_trans, '.-', label='network throughput history3')
-        #plt.plot(framenumber, network_TP_history4_trans, '.-', label='network throughput history4')
+        plt.plot(framenumber, network_TP_history, '.-', label='network throughput history')
+        plt.plot(framenumber, network_TP_history2, '.-', label='network throughput history2')
+        plt.plot(framenumber, network_TP_history3, '.-', label='network throughput history3')
+        plt.plot(framenumber, network_TP_history4, '.-', label='network throughput history4')
         #plt.plot(framenumber, difference2, '.-', label='difference2')
         #plt.plot(framenumber, difference3, '.-', label='difference3')
         #plt.plot(framenumber, difference4, '.-', label='difference4')
